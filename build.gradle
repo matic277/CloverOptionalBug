@@ -1,3 +1,9 @@
+buildscript {
+    dependencies {
+        classpath "org.openclover:clover:4.5.0"
+    }
+}
+
 plugins {
     id 'java'
 }
@@ -17,3 +23,80 @@ dependencies {
 test {
     useJUnitPlatform()
 }
+
+configurations {
+    cloverImplementation.extendsFrom testImplementation
+}
+
+dependencies {
+    cloverImplementation "org.openclover:clover:4.5.0"
+    testImplementation "org.openclover:clover:4.5.0"
+}
+
+sourceSets {
+    clover {
+        java.srcDir "${buildDir}/sources-instr"
+        java.destinationDirectory.set(file("${buildDir}/classes"))
+    }
+}
+
+var instrumentationLevel = "statement"
+var pertestCoverage = "on"
+
+tasks.matching { task -> !task.name.startsWith('clean') }.all { task -> task.mustRunAfter clean }
+tasks.withType(Test) {
+    dependsOn clean
+    project.sourceSets.test.runtimeClasspath += files(configurations.cloverRuntimeClasspath)
+    project.sourceSets.test.runtimeClasspath += files(sourceSets.clover.output)
+    project.sourceSets.test.runtimeClasspath -= sourceSets.test.output.classesDirs
+
+    systemProperty "clover.pertest.coverage", instrumentationLevel
+    systemProperty "clover.instrumentationLevel", pertestCoverage
+}
+
+compileCloverJava {
+    options.fork = "true"
+    options.forkOptions.with {
+        memoryMaximumSize = "2048m"
+    }
+}
+
+task cloverInstr(description: "Instrument sources for Clover", group: "verification") {
+    inputs.files sourceSets.main.allJava + sourceSets.test.allJava
+    outputs.dir "$buildDir/sources-instr"
+
+    doFirst {
+        def argsList = ["--initstring", "${buildDir}/clover/clover.db",
+                        "--instrlevel", instrumentationLevel,
+                        "-d", "${buildDir}/sources-instr"]
+        argsList.addAll(inputs.files.files.collect({ file ->
+            file.absolutePath
+        }))
+        String[] args = argsList.toArray()
+
+        com.atlassian.clover.CloverInstr.mainImpl(args)
+    }
+}
+
+cloverClasses {
+    dependsOn cloverInstr
+}
+
+//task cloverReport(description: "Generate report for Clover", group: "verification") {
+//    inputs.dir "${buildDir}/clover"
+//    outputs.dir "${reportsDir}/clover"
+//    onlyIf {
+//        file("${buildDir}/clover/clover.db").exists()
+//    }
+//    doFirst {
+//        def argsList = ["--initstring", "${buildDir}/clover/clover.db",
+//                        "-o", "${reportsDir}/clover"]
+//        String[] args = argsList.toArray()
+//        com.atlassian.clover.reporters.html.HtmlReporter.runReport(args)
+//
+//        argsList = ["--initstring", "${buildDir}/clover/clover.db",
+//                    "-o", "${reportsDir}/cloverReport.xml"]
+//        args = argsList.toArray()
+//        com.atlassian.clover.reporters.xml.XMLReporter.runReport(args)
+//    }
+//}
